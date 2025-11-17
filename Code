@@ -1,0 +1,196 @@
+PART 1 — DATA COLLECTION USING WEBCAM
+
+import cv2
+import os
+
+# List of object classes you want to capture
+classes = ["mobile", "bottle", "book", "headphone", "mouse"]
+
+# Create a separate folder for each class (if not already created)
+for cls in classes:
+    os.makedirs(f"dataset/{cls}", exist_ok=True)
+
+# Start webcam
+cap = cv2.VideoCapture(0)
+
+# Define a fixed ROI (Region of Interest) where the object must be placed
+x, y, w, h = 100, 100, 300, 300
+
+current_class = 0      # Index of current object class
+count = 0              # Image counter for each class
+img_size = (128, 128)  # Resize captured images
+
+print("📸 Press 'c' = Capture | 'n' = Next Class | 'q' = Quit")
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # Draw ROI box on screen
+    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
+    # Display current class & image count
+    cv2.putText(frame, f"Class: {classes[current_class]}  Count: {count}",
+                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+    cv2.imshow("Data Collection", frame)
+
+    key = cv2.waitKey(1) & 0xFF
+
+    # ------------------------------
+    # CAPTURE IMAGE OF THE OBJECT
+    # ------------------------------
+    if key == ord('c'):
+        roi = frame[y:y+h, x:x+w]               # Crop ROI
+        roi_resized = cv2.resize(roi, img_size) # Resize to 128x128
+        save_path = f"dataset/{classes[current_class]}/{count}.jpg"
+        cv2.imwrite(save_path, roi_resized)
+        count += 1
+        print(f"✅ Saved {save_path}")
+
+    # -------------------------------
+    # MOVE TO NEXT CLASS
+    # -------------------------------
+    elif key == ord('n'):
+        current_class += 1
+        count = 0
+        if current_class >= len(classes):
+            print("🎉 All classes collected!")
+            break
+        print(f"➡️ Moving to class: {classes[current_class]}")
+
+    # -------------------------------
+    # QUIT PROGRAM
+    # -------------------------------
+    elif key == ord('q'):
+        print("👋 Quit by user")
+        break
+
+# Release webcam & close windows
+cap.release()
+cv2.destroyAllWindows()
+
+
+PART 2 — TRAIN A CNN MODEL WITH TENSORFLOW
+
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+# Path to dataset folder
+data_dir = "dataset/"
+img_size = (128, 128)
+batch_size = 32
+
+# Image augmentation to avoid overfitting
+datagen = ImageDataGenerator(
+    rescale=1./255,            # Normalize pixels (0-1)
+    validation_split=0.2,      # 80% Train, 20% Validation
+    rotation_range=20,
+    zoom_range=0.2,
+    horizontal_flip=True
+)
+
+# Training dataset
+train_gen = datagen.flow_from_directory(
+    data_dir,
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='sparse',
+    subset='training'
+)
+
+# Validation dataset
+val_gen = datagen.flow_from_directory(
+    data_dir,
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='sparse',
+    subset='validation'
+)
+
+# -----------------------------
+# CNN MODEL ARCHITECTURE
+# -----------------------------
+model = models.Sequential([
+    layers.Conv2D(32, (3,3), activation='relu', input_shape=(128,128,3)),
+    layers.MaxPooling2D(2,2),
+
+    layers.Conv2D(64, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
+
+    layers.Conv2D(128, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
+
+    layers.Flatten(),
+    layers.Dense(128, activation='relu'),
+    layers.Dense(5, activation='softmax')  # 5 classes
+])
+
+# Compile model
+model.compile(optimizer='adam',
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+
+# Train model
+history = model.fit(
+    train_gen,
+    validation_data=val_gen,
+    epochs=15
+)
+
+# Save trained model
+model.save("object_model.h5")
+
+print("✅ Model trained and saved as object_model.h5")
+print("Class indices:", train_gen.class_indices)
+
+
+PART 3 — REAL-TIME OBJECT RECOGNITION
+
+import cv2
+import numpy as np
+from tensorflow.keras.models import load_model
+
+# Load trained CNN model
+model = load_model("object_model.h5")
+
+# Classes in same order as during training
+labels = ["mobile", "bottle", "book", "headphone", "mouse"]
+
+# Start webcam
+cap = cv2.VideoCapture(0)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # ROI box
+    x, y, w, h = 100, 100, 300, 300
+    roi = frame[y:y+h, x:x+w]
+
+    # Preprocess ROI
+    img = cv2.resize(roi, (128,128))
+    img = img.astype("float32") / 255.0
+    img = np.expand_dims(img, axis=0)
+
+    # Predict class
+    pred = model.predict(img, verbose=0)
+    class_id = np.argmax(pred)
+    label = labels[class_id]
+
+    # Display prediction
+    cv2.putText(frame, label, (50, 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
+    cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
+
+    cv2.imshow("Object Recognition", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
